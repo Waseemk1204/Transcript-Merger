@@ -1,4 +1,4 @@
-import { parseTimestampToMs, formatMsToTimestamp, shiftTimestampLine, makeFallbackTimestamp } from './timestamp-arith';
+import { parseTimestampToMs, shiftTimestampLine, makeFallbackTimestamp } from './timestamp-arith';
 
 export interface SrtBlock {
   origIndex: number | null;
@@ -36,25 +36,22 @@ export function permissiveParseSrt(content: string): SrtBlock[] {
   let textLines: string[] = [];
   let expectingIndex = true;
   let expectingTimestamp = false;
+  let isReadingText = false;
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
-    // Empty line - end of block
-    if (line === '') {
-      if (currentBlock) {
+    // Check if line looks like an index (just digits) - this starts a new block
+    // Only treat as index if we're expecting one OR if we have a complete previous block
+    if (/^\d+$/.test(line)) {
+      // If we have a current block, finalize it first
+      if (currentBlock && (currentBlock.tsRaw || textLines.length > 0)) {
         currentBlock.texts = textLines;
         blocks.push(currentBlock);
-        currentBlock = null;
         textLines = [];
-        expectingIndex = true;
-        expectingTimestamp = false;
       }
-      continue;
-    }
-    
-    // Check if line looks like an index (just digits)
-    if (expectingIndex && /^\d+$/.test(line)) {
+      
+      // Start new block
       currentBlock = {
         origIndex: parseInt(line, 10),
         tsRaw: '',
@@ -62,6 +59,7 @@ export function permissiveParseSrt(content: string): SrtBlock[] {
       };
       expectingIndex = false;
       expectingTimestamp = true;
+      isReadingText = false;
       continue;
     }
     
@@ -70,20 +68,41 @@ export function permissiveParseSrt(content: string): SrtBlock[] {
       if (currentBlock) {
         currentBlock.tsRaw = line;
         expectingTimestamp = false;
+        isReadingText = true; // After timestamp, we're reading text
       }
       continue;
     }
     
-    // Otherwise, it's a text line
-    if (currentBlock) {
-      textLines.push(line);
-    } else if (!expectingIndex) {
+    // If we're reading text (have timestamp), collect all lines including blank ones
+    // until we hit the next index number
+    if (isReadingText && currentBlock) {
+      // Keep the raw line to preserve blank lines, but trim for empty check
+      if (line === '') {
+        // Blank line within text - preserve it
+        textLines.push('');
+      } else {
+        // Non-empty text line
+        textLines.push(line);
+      }
+      continue;
+    }
+    
+    // Fallback: if we have a block but no timestamp yet, this might be text
+    if (currentBlock && !expectingTimestamp) {
+      if (line === '') {
+        textLines.push('');
+      } else {
+        textLines.push(line);
+      }
+      isReadingText = true;
+    } else if (!currentBlock && !expectingIndex) {
       // If we're not expecting an index but don't have a block, create one
       currentBlock = {
         origIndex: null,
         tsRaw: '',
         texts: [line]
       };
+      isReadingText = true;
     }
   }
   
