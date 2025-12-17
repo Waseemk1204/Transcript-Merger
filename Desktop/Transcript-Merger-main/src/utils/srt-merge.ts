@@ -73,13 +73,13 @@ export function permissiveParseSrt(content: string): SrtBlock[] {
       continue;
     }
 
-    // If we're reading text (have timestamp), collect all lines including blank ones
-    // until we hit the next index number
+    // If we're reading text (have timestamp), collect non-empty lines
+    // Blank lines mark the end of text content (cue separator)
     if (isReadingText && currentBlock) {
-      // Keep the raw line to preserve blank lines, but trim for empty check
       if (line === '') {
-        // Blank line within text - preserve it
-        textLines.push('');
+        // Blank line signals end of this cue's text - don't add to textLines
+        // The next index line will finalize the block
+        continue;
       } else {
         // Non-empty text line
         textLines.push(line);
@@ -90,7 +90,8 @@ export function permissiveParseSrt(content: string): SrtBlock[] {
     // Fallback: if we have a block but no timestamp yet, this might be text
     if (currentBlock && !expectingTimestamp) {
       if (line === '') {
-        textLines.push('');
+        // Skip empty lines in fallback too
+        continue;
       } else {
         textLines.push(line);
       }
