@@ -187,7 +187,8 @@ export function App() {
 
         // Generate merged SRT
         const mergedSrt = allBlocks.map(block => {
-          return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
+          const cleanTexts = block.texts.filter(t => t.trim() !== '');
+          return `${block.index}\n${block.timestamp}\n${cleanTexts.join('\n')}`;
         }).join('\n\n') + '\n';
 
         setMergeResult({
@@ -270,7 +271,8 @@ export function App() {
           }
 
           const mergedSrt = allBlocks.map(block => {
-            return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
+            const cleanTexts = block.texts.filter(t => t.trim() !== '');
+            return `${block.index}\n${block.timestamp}\n${cleanTexts.join('\n')}`;
           }).join('\n\n') + '\n';
 
           await navigator.clipboard.writeText(mergedSrt);

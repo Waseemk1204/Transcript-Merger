@@ -224,7 +224,9 @@ export function mergeSrtFiles(files: Array<{ name: string; content: string }>): 
 
   // Generate merged SRT content
   const mergedSrt = mergedBlocks.map(block => {
-    return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
+    // Filter out any empty strings from texts to prevent trailing blank lines
+    const cleanTexts = block.texts.filter(t => t.trim() !== '');
+    return `${block.index}\n${block.timestamp}\n${cleanTexts.join('\n')}`;
   }).join('\n\n') + '\n';
 
   return {
