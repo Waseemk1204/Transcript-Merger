@@ -6,31 +6,6 @@ export interface SrtBlock {
   texts: string[];
 }
 
-export interface Cue {
-  startMs: number;
-  endMs: number;
-  text: string;
-  sourceFileIndex?: number;
-}
-
-export interface ParsedFile {
-  filename?: string;
-  cues: Cue[];
-  meta?: Record<string, any>;
-}
-
-export interface MergeOptions {
-  perFileOffsetMs?: Record<number, number>;
-  useEffectiveEndMs?: boolean;
-  sortFinalByStart?: boolean;
-}
-
-export interface SequentialMergeResult {
-  mergedCues: Cue[];
-  warnings: string[];
-  errors: string[];
-}
-
 export interface MergeDiagnostic {
   src_file: string;
   original_index: number | null;
@@ -50,128 +25,6 @@ export interface MergeResult {
     parseIssuesCount: number;
     filesProcessed: number;
   };
-}
-
-/**
- * Merge parsed files sequentially using cumulative shifts.
- *
- * parsedFiles: [
- *   { filename, cues: [{ startMs, endMs, text, ... }], meta?: {} },
- *   ...
- * ]
- * options: {
- *   perFileOffsetMs: { [fileIndex]: ms }, // optional explicit shift for a specific file (applies to subsequent files)
- *   useEffectiveEndMs: true|false, // if true, use each file's max endMs as effective duration for appending
- *   sortFinalByStart: false|true // whether to sort final cues by start time
- * }
- */
-export function mergeParsedFilesSequential(
-  parsedFiles: ParsedFile[],
-  options: MergeOptions = {}
-): SequentialMergeResult {
-  const perFileOffsetMs = options.perFileOffsetMs || {};
-  const sortFinalByStart = options.sortFinalByStart ?? false;
-
-  // Validate input
-  if (!Array.isArray(parsedFiles) || parsedFiles.length === 0) {
-    return { mergedCues: [], warnings: ['no_files'], errors: ['no_files_uploaded'] };
-  }
-
-  // compute effective durations / baseEndMs per file
-  const baseEndMs = parsedFiles.map((pf) => {
-    const cues = pf.cues || [];
-    // find maximum endMs in file
-    const ends = cues
-      .map(c => (Number.isFinite(c.endMs) ? c.endMs : null))
-      .filter(x => x !== null) as number[];
-    if (ends.length === 0) return null; // no timestamps
-    return Math.max(...ends);
-  });
-
-  // compute cumulative shifts
-  const cumulativeShift = new Array(parsedFiles.length).fill(0);
-  let runningShift = 0;
-
-  for (let i = 0; i < parsedFiles.length; ++i) {
-    cumulativeShift[i] = runningShift; // file i will be shifted by runningShift
-
-    // Determine effective duration for this file to add to runningShift for next files:
-    // priority: explicit perFileOffsetMs[i] (applies to subsequent files),
-    // else use baseEndMs[i] if available,
-    // else fallback to computed heuristics (max end - min start OR 0)
-    if (perFileOffsetMs.hasOwnProperty(i)) {
-      // if user wants this file to be considered a specific length
-      runningShift = runningShift + perFileOffsetMs[i];
-    } else if (baseEndMs[i] !== null && baseEndMs[i] !== undefined) {
-      // Use max endMs as the length reference for appending
-      runningShift = runningShift + (baseEndMs[i] as number);
-    } else {
-      // fallback: compute duration from cues if possible
-      const cues = parsedFiles[i].cues || [];
-      const starts = cues
-        .map(c => (Number.isFinite(c.startMs) ? c.startMs : null))
-        .filter(x => x !== null) as number[];
-      const ends = cues
-        .map(c => (Number.isFinite(c.endMs) ? c.endMs : null))
-        .filter(x => x !== null) as number[];
-      if (starts.length && ends.length) {
-        const dur = Math.max(...ends) - Math.min(...starts);
-        runningShift = runningShift + Math.max(0, dur);
-      } else {
-        // No times found — cannot auto-append reliably; leave runningShift unchanged
-        // Add a warning entry later
-      }
-    }
-  }
-
-  // Apply shifts to cues
-  const merged: Cue[] = [];
-  const warnings: string[] = [];
-  const errors: string[] = [];
-
-  for (let i = 0; i < parsedFiles.length; ++i) {
-    const pf = parsedFiles[i];
-    const shift = cumulativeShift[i] || 0;
-
-    if (!pf.cues || pf.cues.length === 0) {
-      warnings.push(`file_${i}_no_cues`);
-      continue;
-    }
-
-    for (const cue of pf.cues) {
-      if (!Number.isFinite(cue.startMs) || !Number.isFinite(cue.endMs)) {
-        warnings.push(`file_${i}_malformed_cue`);
-        continue;
-      }
-      merged.push({
-        startMs: cue.startMs + shift,
-        endMs: cue.endMs + shift,
-        text: cue.text,
-        sourceFileIndex: i,
-      });
-    }
-  }
-
-  // Optionally sort
-  if (sortFinalByStart) merged.sort((a, b) => a.startMs - b.startMs);
-
-  // Validate merged list for overlaps or negative times
-  for (let i = 0; i < merged.length; ++i) {
-    const c = merged[i];
-    if (c.startMs < 0 || c.endMs < 0) {
-      errors.push('negative_timestamps');
-      break;
-    }
-    if (c.endMs < c.startMs) {
-      warnings.push('cue_end_before_start');
-    }
-    if (i > 0 && merged[i - 1].endMs > c.startMs && merged[i - 1].sourceFileIndex === c.sourceFileIndex) {
-      warnings.push('overlap_detected');
-      // keep going; UI can show details
-    }
-  }
-
-  return { mergedCues: merged, warnings, errors };
 }
 
 // Permissive SRT block parser
@@ -370,8 +223,8 @@ export function mergeSrtFiles(files: Array<{ name: string; content: string }>): 
   
   // Generate merged SRT content
   const mergedSrt = mergedBlocks.map(block => {
-    return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}\n`;
-  }).join('\n');
+    return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
+  }).join('\n\n') + '\n';
   
   return {
     mergedSrt,
