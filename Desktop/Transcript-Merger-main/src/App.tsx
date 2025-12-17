@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { UploadArea } from './components/UploadArea';
 import { FileList } from './components/FileList';
 import { Footer } from './components/Footer';
@@ -6,7 +6,7 @@ import { Toast } from './components/Toast';
 import { TimelineAlignmentCard, SecondaryFile, ComputedOffset } from './components/TimelineAlignmentCard';
 import { MergePreview } from './components/MergePreview';
 import { TranscriptFile } from './types';
-import { mergeSrtFiles, MergeResult, mergeParsedFilesSequential, ParsedFile } from './utils/srt-merge';
+import { mergeSrtFiles, MergeResult } from './utils/srt-merge';
 import { parseTimestampToMs, formatMsToTimestamp } from './utils/timestampUtils';
 import { permissiveParseSrt } from './utils/srt-merge';
 import { shiftTimestampLine } from './utils/timestamp-arith';
@@ -25,7 +25,7 @@ export function App() {
 
   const handleFilesSelected = async (selectedFiles: File[]) => {
     const newFiles: FileWithContent[] = [];
-    
+
     for (const file of selectedFiles) {
       try {
         const content = await file.text();
@@ -59,7 +59,7 @@ export function App() {
         });
       }
     }
-    
+
     setFiles(prev => [...prev, ...newFiles]);
   };
 
@@ -76,7 +76,7 @@ export function App() {
     setFiles(prev => {
       const removedFile = prev.find(f => f.id === id);
       const updated = prev.filter(f => f.id !== id);
-      
+
       // If we removed the primary file and there are still files, make the first one primary
       if (removedFile?.isPrimary && updated.length > 0) {
         return updated.map((f, index) => ({
@@ -84,7 +84,7 @@ export function App() {
           isPrimary: index === 0
         }));
       }
-      
+
       return updated;
     });
     setMergeResult(null);
@@ -99,9 +99,9 @@ export function App() {
   // Calculate primary timeline end from primary file
   const primaryEnd = useMemo(() => {
     if (!primaryFile) return '00:00:00,000';
-    
+
     const blocks = permissiveParseSrt(primaryFile.fileContent);
-    
+
     let lastEndMs = 0;
     for (const block of blocks) {
       const shifted = shiftTimestampLine(block.tsRaw, 0);
@@ -115,7 +115,7 @@ export function App() {
         }
       }
     }
-    
+
     return formatMsToTimestamp(lastEndMs);
   }, [primaryFile]);
 
@@ -141,19 +141,19 @@ export function App() {
 
   const handleMerge = async () => {
     if (files.length === 0) return;
-    
+
     setIsProcessing(true);
     setMergeResult(null);
-    
+
     try {
       // If we have computed offsets, use them to shift files
       if (computedOffsets.length > 0 && files.length > 1 && primaryFile) {
         // Merge with offsets: primary file + shifted secondary files
         const primaryBlocks = permissiveParseSrt(primaryFile.fileContent);
-        
+
         const allBlocks: Array<{ index: number; timestamp: string; texts: string[] }> = [];
         let globalIndex = 1;
-        
+
         // Add primary file blocks as-is
         for (const block of primaryBlocks) {
           const shifted = shiftTimestampLine(block.tsRaw, 0);
@@ -165,13 +165,13 @@ export function App() {
             });
           }
         }
-        
+
         // Add secondary files with their computed offsets
         const secondaryFilesList = files.filter(f => !f.isPrimary);
         for (const file of secondaryFilesList) {
           const offset = computedOffsets.find(o => o.id === file.id);
           const offsetMs = offset?.offsetMs ?? 0;
-          
+
           const blocks = permissiveParseSrt(file.fileContent);
           for (const block of blocks) {
             const shifted = shiftTimestampLine(block.tsRaw, offsetMs);
@@ -184,12 +184,12 @@ export function App() {
             }
           }
         }
-        
+
         // Generate merged SRT
         const mergedSrt = allBlocks.map(block => {
-          return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}\n`;
-        }).join('\n');
-        
+          return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
+        }).join('\n\n') + '\n';
+
         setMergeResult({
           mergedSrt,
           diagnostics: [],
@@ -201,42 +201,16 @@ export function App() {
           }
         });
       } else {
-        // Use new sequential merge by parsing files into cues and applying cumulative shifts
-        const parsedFiles: ParsedFile[] = files.map(file => {
-          const blocks = permissiveParseSrt(file.fileContent);
-          const cues = [] as any[];
-          for (const b of blocks) {
-            const shifted = shiftTimestampLine(b.tsRaw, 0);
-            if (!shifted) continue;
-            const tokens = Array.from(shifted.matchAll(/\d{1,2}:\d{2}:\d{2}[,\.]?\d{0,3}/g), m => m[0]);
-            if (tokens.length < 2) continue;
-            const startMs = parseTimestampToMs(tokens[0].replace('.', ','));
-            const endMs = parseTimestampToMs(tokens[1].replace('.', ','));
-            if (startMs === null || endMs === null) continue;
-            cues.push({ startMs, endMs, text: b.texts.length > 0 ? b.texts.join('\n') : '[No text]' });
-          }
-          return { filename: file.name, cues } as ParsedFile;
-        });
+        // Fallback to simple arithmetic merge (original behavior)
+        const filesToMerge = files.map(file => ({
+          name: file.name,
+          content: file.fileContent
+        }));
 
-        const seq = mergeParsedFilesSequential(parsedFiles);
-
-        // Build merged SRT from merged cues
-        const mergedSrt = seq.mergedCues.map((c, idx) => {
-          return `${idx + 1}\n${formatMsToTimestamp(c.startMs)} --> ${formatMsToTimestamp(c.endMs)}\n${c.text}\n`;
-        }).join('\n');
-
-        setMergeResult({
-          mergedSrt,
-          diagnostics: [],
-          stats: {
-            totalInputCues: parsedFiles.reduce((s, f) => s + f.cues.length, 0),
-            totalOutputCues: seq.mergedCues.length,
-            parseIssuesCount: seq.warnings.length,
-            filesProcessed: files.length
-          }
-        });
+        const result = mergeSrtFiles(filesToMerge);
+        setMergeResult(result);
       }
-      
+
       setToastMessage('Merge completed successfully!');
       setShowToast(true);
     } catch (error) {
@@ -265,7 +239,7 @@ export function App() {
           const primaryBlocks = permissiveParseSrt(primaryFile.fileContent);
           const allBlocks: Array<{ index: number; timestamp: string; texts: string[] }> = [];
           let globalIndex = 1;
-          
+
           for (const block of primaryBlocks) {
             const shifted = shiftTimestampLine(block.tsRaw, 0);
             if (shifted) {
@@ -276,12 +250,12 @@ export function App() {
               });
             }
           }
-          
+
           const secondaryFilesList = files.filter(f => !f.isPrimary);
           for (const file of secondaryFilesList) {
             const offset = computedOffsets.find(o => o.id === file.id);
             const offsetMs = offset?.offsetMs ?? 0;
-            
+
             const blocks = permissiveParseSrt(file.fileContent);
             for (const block of blocks) {
               const shifted = shiftTimestampLine(block.tsRaw, offsetMs);
@@ -294,11 +268,11 @@ export function App() {
               }
             }
           }
-          
+
           const mergedSrt = allBlocks.map(block => {
-            return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}\n`;
-          }).join('\n');
-          
+            return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
+          }).join('\n\n') + '\n';
+
           await navigator.clipboard.writeText(mergedSrt);
           setToastMessage('Merged transcript copied to clipboard!');
           setShowToast(true);
@@ -353,10 +327,10 @@ export function App() {
         {/* File List */}
         {files.length > 0 && (
           <div className="mb-8">
-            <FileList 
-              files={files} 
+            <FileList
+              files={files}
               onSetPrimary={handleSetPrimary}
-              onRemove={handleRemove} 
+              onRemove={handleRemove}
             />
           </div>
         )}
@@ -423,7 +397,7 @@ export function App() {
             {mergeResult && (
               <div className="mt-6 bg-white rounded-lg shadow-md p-4 sm:p-6">
                 <h3 className="text-lg sm:text-xl font-semibold mb-4">Merge Complete</h3>
-                
+
                 {/* Stats */}
                 <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
                   <div className="bg-gray-50 p-2 sm:p-3 rounded">
