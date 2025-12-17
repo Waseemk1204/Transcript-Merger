@@ -187,12 +187,7 @@ export function App() {
 
         // Generate merged SRT
         const mergedSrt = allBlocks.map(block => {
-          // Filter out trailing empty lines from texts
-          const texts = block.texts.slice();
-          while (texts.length > 0 && texts[texts.length - 1] === '') {
-            texts.pop();
-          }
-          return `${block.index}\n${block.timestamp}\n${texts.join('\n')}`;
+          return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
         }).join('\n\n') + '\n';
 
         setMergeResult({
@@ -275,12 +270,7 @@ export function App() {
           }
 
           const mergedSrt = allBlocks.map(block => {
-            // Filter out trailing empty lines from texts
-            const texts = block.texts.slice();
-            while (texts.length > 0 && texts[texts.length - 1] === '') {
-              texts.pop();
-            }
-            return `${block.index}\n${block.timestamp}\n${texts.join('\n')}`;
+            return `${block.index}\n${block.timestamp}\n${block.texts.join('\n')}`;
           }).join('\n\n') + '\n';
 
           await navigator.clipboard.writeText(mergedSrt);
